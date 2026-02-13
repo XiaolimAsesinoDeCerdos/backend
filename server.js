@@ -205,11 +205,6 @@ function regenerateImageUrlsInArray(items, req, imageFields = ['image_url', 'pri
 const db = require("./db")
 
 
-db.connect((err) => {
-  if (err) console.error("Error BD:", err)
-  else console.log("✓ BD conectada correctamente")
-})
-
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
@@ -3035,7 +3030,11 @@ app.get("/admin/inversiones/investors", (req, res) => {
 // ==========================
 // 🚀 INICIAR SERVIDOR
 // ==========================
-app.listen(3000, "0.0.0.0", () => {
+
+const PORT = process.env.PORT || 3000;
+
+
+app.listen(PORT, "0.0.0.0", () => {
   console.log("✓ Servidor corriendo en http://0.0.0.0:3000")
   console.log("✓ Para emulador Android: /uploads/")
   console.log("✓ Rutas Inmobiliaria: /properties, /admin/banners, etc.")
