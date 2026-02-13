@@ -9,19 +9,21 @@ const fs = require("fs")
 const nodemailer = require("nodemailer")
 const app = express()
 const inversionesRouter = require("./inversiones");
-// Enhanced CORS for ngrok
+// Enhanced CORS for Railway (works with all origins including mobile clients)
 app.use(cors({
-  origin: true, // Allow all origins (important for ngrok and external devices)
+  origin: true, // Allow all origins (important for mobile clients and external devices)
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 }))
-//app.use(express.json({ limit: "50mb" }))    mal 
-//app.use(express.urlencoded({ limit: "50mb" }))   mal
-////
-// Middleware especial para ngrok - HEADERS
+
+// BODY PARSING (before routes)
+app.use(express.json({ limit: "50mb" }))
+app.use(express.urlencoded({ limit: "50mb", extended: true }))
+
+// Middleware para headers CORS correctos en Railway
 app.use((req, res, next) => {
-  // Asegurar que las respuestas tengan headers correctos para ngrok
+  // Headers para Railway - sin ngrok skip warning
   res.set({
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
@@ -38,31 +40,19 @@ app.use((req, res, next) => {
   next();
 });
 
+// Rutas de inversiones ANTES de servir uploads estáticos
+app.use("/api/inversiones", inversionesRouter);
+
 // Middleware para servir archivos estáticos con headers correctos
 app.use("/uploads", (req, res, next) => {
   // Set headers para archivos estáticos
   res.set({
     'Access-Control-Allow-Origin': '*',
-    'Cache-Control': 'public, max-age=31536000'
+    'Cache-Control': 'public, max-age=31536000',
+    'Content-Type': 'image/jpeg' // Default image type
   });
   express.static(path.join(__dirname, "uploads"))(req, res, next);
 });
-//////
-////
-////
-///
-///
-///
-//
-// ==========================
-// MULTER SETUP
-// ==========================
-// ==========================
-// BODY PARSING (sin body-parser)
-// ==========================
-app.use(express.json({ limit: "50mb" }))
-app.use(express.urlencoded({ limit: "50mb", extended: true }))
-app.use("/api/inversiones", inversionesRouter);
 
 
 
@@ -85,11 +75,19 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage })
 
-// Serve static uploads folder
-app.use("/uploads", express.static(path.join(__dirname, "uploads")))
+// Serve static uploads folder directly
+app.use("/uploads", express.static(path.join(__dirname, "uploads"), {
+  maxAge: '1d',
+  setHeaders: (res, path) => {
+    res.set({
+      'Access-Control-Allow-Origin': '*',
+      'Cache-Control': 'public, max-age=86400'
+    })
+  }
+}))
 
-// Image Proxy Endpoint - Solves ngrok image loading issues
-// Returns images with proper CORS headers and ngrok compatibility
+// Image Proxy Endpoint - Better compatibility with Railway
+// Returns images with proper CORS headers
 app.get("/image/:filename", (req, res) => {
   const filename = req.params.filename
   const filepath = path.join(__dirname, "uploads", filename)
@@ -106,10 +104,18 @@ app.get("/image/:filename", (req, res) => {
     return res.status(404).json({ error: "Archivo no encontrado" })
   }
   
-  // Set proper headers for image serving
+  // Detect content-type based on file extension
+  const ext = path.extname(filename).toLowerCase()
+  let contentType = 'image/jpeg'
+  if (ext === '.png') contentType = 'image/png'
+  else if (ext === '.gif') contentType = 'image/gif'
+  else if (ext === '.webp') contentType = 'image/webp'
+  else if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg'
+  
+  // Set proper headers for Railway
   res.set({
-    'Content-Type': 'image/jpeg', // Could be more sophisticated based on file ext
-    'Cache-Control': 'public, max-age=3600',
+    'Content-Type': contentType,
+    'Cache-Control': 'public, max-age=86400',
     'Access-Control-Allow-Origin': '*',
   })
   
