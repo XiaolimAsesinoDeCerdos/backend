@@ -17,137 +17,147 @@ const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-inversiones-2024";
 // ==========================
 
 // Login for inversiones users (investors)
-router.post("/login", (req, res) => {
-  const { email, password } = req.body;
-  
-  console.log(`[v0] Inversiones login attempt: ${email}`);
-  
-  if (!email || !password) {
-    return res.status(400).json({ error: "Email y contraseña requeridos" });
-  }
-  
-  // Query inversiones_investors table
-  db.query(
-    "SELECT * FROM inversiones_investors WHERE email = ?",
-    [email],
-    async (err, results) => {
-      if (err) {
-        console.error("[v0] Login DB error:", err.message);
-        return res.status(500).json({ error: "Error de servidor" });
-      }
-      
-      if (results.length === 0) {
-        console.log(`[v0] User not found: ${email}`);
-        return res.status(401).json({ error: "Credenciales inválidas" });
-      }
-      
-      const user = results[0];
-      
-      // Compare password
-      const validPassword = await bcrypt.compare(password, user.password);
-      if (!validPassword) {
-        console.log(`[v0] Invalid password for: ${email}`);
-        return res.status(401).json({ error: "Credenciales inválidas" });
-      }
-      
-      // Generate JWT token
-      const token = jwt.sign(
-        { id: user.id, email: user.email, role: user.role },
-        JWT_SECRET,
-        { expiresIn: "7d" }
-      );
-      
-      console.log(`[v0] Login successful: ${email}, id=${user.id}, role=${user.role}`);
-      
-      res.json({
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        token: token
-      });
+router.post("/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    console.log(`[v0] Inversiones login attempt: ${email}`);
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email y contraseña requeridos" });
     }
-  );
+    
+    // Query inversiones_investors table with promise wrapper
+    const results = await new Promise((resolve, reject) => {
+      db.query(
+        "SELECT * FROM inmobiliaria.inversiones_investors WHERE email = ?",
+        [email],
+        (err, results) => {
+          if (err) {
+            console.error("[v0] DB Error:", err);
+            reject(err);
+          } else {
+            console.log(`[v0] Query results for ${email}:`, results);
+            resolve(results);
+          }
+        }
+      );
+    });
+    
+    if (results.length === 0) {
+      console.log(`[v0] User not found: ${email}`);
+      return res.status(401).json({ error: "Credenciales inválidas" });
+    }
+    
+    const user = results[0];
+    
+    // Compare password
+    const validPassword = await bcrypt.compare(password, user.password);
+    if (!validPassword) {
+      console.log(`[v0] Invalid password for: ${email}`);
+      return res.status(401).json({ error: "Credenciales inválidas" });
+    }
+    
+    // Generate JWT token
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+    
+    console.log(`[v0] Login successful: ${email}, id=${user.id}, role=${user.role}`);
+    
+    res.json({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      token: token
+    });
+  } catch (error) {
+    console.error("[v0] Login error:", error.message);
+    res.status(500).json({ error: "Error de servidor" });
+  }
 });
 
 // Register new investor
 router.post("/register", async (req, res) => {
-  const { email, password, name, phone, ci, nationality, country, professional_profile } = req.body;
-  
-  console.log(`[v0] Inversiones register attempt: ${email}`);
-  
-  if (!email || !password || !name || !ci || !nationality) {
-    return res.status(400).json({ error: "Email, contraseña, nombre, CI y nacionalidad son requeridos" });
-  }
-  
   try {
+    const { email, password, name, phone, ci, nationality, country, professional_profile } = req.body;
+    
+    console.log(`[v0] Inversiones register attempt: ${email}`);
+    
+    if (!email || !password || !name || !ci || !nationality) {
+      return res.status(400).json({ error: "Email, contraseña, nombre, CI y nacionalidad son requeridos" });
+    }
+    
     // Check if email already exists
-    db.query(
-      "SELECT id FROM inversiones_investors WHERE email = ?",
-      [email],
-      async (err, results) => {
-        if (err) {
-          console.error("[v0] Register check error:", err.message);
-          return res.status(500).json({ error: "Error de servidor" });
+    const emailResults = await new Promise((resolve, reject) => {
+      db.query(
+        "SELECT id FROM inversiones_investors WHERE email = ?",
+        [email],
+        (err, results) => {
+          if (err) reject(err);
+          else resolve(results);
         }
-        
-        if (results.length > 0) {
-          return res.status(400).json({ error: "Email ya registrado" });
+      );
+    });
+    
+    if (emailResults.length > 0) {
+      return res.status(400).json({ error: "Email ya registrado" });
+    }
+    
+    // Check if CI already exists
+    const ciResults = await new Promise((resolve, reject) => {
+      db.query(
+        "SELECT id FROM inversiones_investors WHERE ci = ?",
+        [ci],
+        (err, results) => {
+          if (err) reject(err);
+          else resolve(results);
         }
-        
-        // Check if CI already exists
-        db.query(
-          "SELECT id FROM inversiones_investors WHERE ci = ?",
-          [ci],
-          async (err, ciResults) => {
-            if (err) {
-              console.error("[v0] Register CI check error:", err.message);
-              return res.status(500).json({ error: "Error de servidor" });
-            }
-            
-            if (ciResults.length > 0) {
-              return res.status(400).json({ error: "CI ya registrado" });
-            }
-            
-            // Hash password
-            const hashedPassword = await bcrypt.hash(password, 10);
-            
-            // Insert new investor
-            db.query(
-              `INSERT INTO inversiones_investors (email, password, name, phone, ci, nationality, country, professional_profile, role)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'user')`,
-              [email, hashedPassword, name, phone || null, ci, nationality, country || null, professional_profile || null],
-              (err, result) => {
-                if (err) {
-                  console.error("[v0] Register insert error:", err.message);
-                  return res.status(500).json({ error: err.message });
-                }
-                
-                console.log(`[v0] Registration successful: ${email}, id=${result.insertId}`);
-                
-                // Generate JWT token for auto-login
-                const token = jwt.sign(
-                  { id: result.insertId, email: email, role: 'user' },
-                  JWT_SECRET,
-                  { expiresIn: "7d" }
-                );
-                
-                res.json({
-                  id: result.insertId,
-                  email: email,
-                  name: name,
-                  role: 'user',
-                  token: token,
-                  message: "Registro exitoso"
-                });
-              }
-            );
-          }
-        );
-      }
+      );
+    });
+    
+    if (ciResults.length > 0) {
+      return res.status(400).json({ error: "CI ya registrado" });
+    }
+    
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    // Insert new investor
+    const insertResult = await new Promise((resolve, reject) => {
+      db.query(
+        `INSERT INTO inversiones_investors (email, password, name, phone, ci, nationality, country, professional_profile, role)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'user')`,
+        [email, hashedPassword, name, phone || null, ci, nationality, country || null, professional_profile || null],
+        (err, result) => {
+          if (err) reject(err);
+          else resolve(result);
+        }
+      );
+    });
+    
+    console.log(`[v0] Registration successful: ${email}, id=${insertResult.insertId}`);
+    
+    // Generate JWT token for auto-login
+    const token = jwt.sign(
+      { id: insertResult.insertId, email: email, role: 'user' },
+      JWT_SECRET,
+      { expiresIn: "7d" }
     );
+    
+    res.json({
+      id: insertResult.insertId,
+      email: email,
+      name: name,
+      role: 'user',
+      token: token,
+      message: "Registro exitoso"
+    });
   } catch (error) {
-    console.error("[v0] Register error:", error);
+    console.error("[v0] Register error:", error.message);
     res.status(500).json({ error: "Error de servidor" });
   }
 });

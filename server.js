@@ -577,6 +577,153 @@ app.put("/admin/banners/:id/toggle", (req, res) => {
 })
 
 // ==========================
+// ⭐ PROPERTY HIGHLIGHTS
+// ==========================
+
+// Get all highlights for admin
+app.get("/admin/highlights", (req, res) => {
+  db.query(
+    `SELECT ph.*, p.title as property_title
+     FROM property_highlights ph
+     LEFT JOIN properties p ON ph.property_id = p.id
+     ORDER BY ph.created_at DESC`,
+    (err, results) => {
+      if (err) return res.status(500).json({ error: err.message })
+      res.json(results || [])
+    }
+  )
+})
+
+// Get properties available for highlight
+app.get("/admin/properties-for-highlight", (req, res) => {
+  db.query(
+    `SELECT id, title, price, city 
+     FROM properties 
+     WHERE status = 'approved' 
+     ORDER BY title ASC`,
+    (err, results) => {
+      if (err) return res.status(500).json({ error: err.message })
+      res.json(results || [])
+    }
+  )
+})
+
+// Create new highlight
+app.post("/admin/highlights", (req, res) => {
+  const { property_id, amount, start_date, end_date } = req.body
+  
+  // Validaciones
+  if (!property_id || !amount || !start_date || !end_date) {
+    return res.status(400).json({ error: "Todos los campos son requeridos" })
+  }
+
+  db.query(
+    `INSERT INTO property_highlights (property_id, amount, start_date, end_date, active)
+     VALUES (?, ?, ?, ?, 1)`,
+    [property_id, amount, start_date, end_date],
+    (err, result) => {
+      if (err) return res.status(500).json({ error: err.message })
+      
+      // Update property highlight status
+      db.query(
+        `UPDATE properties SET is_highlighted = 1, highlight_end_date = ? WHERE id = ?`,
+        [end_date, property_id],
+        (updateErr) => {
+          if (updateErr) console.error("Error updating property highlight status:", updateErr)
+        }
+      )
+      
+      // Record earnings
+      db.query(
+        `INSERT INTO admin_earnings (admin_id, type, reference_id, amount, status, start_date, end_date)
+         VALUES (?, 'highlight', ?, ?, 'active', ?, ?)`,
+        [1, property_id, amount, start_date, end_date], // admin_id = 1 (current admin)
+        (earningsErr) => {
+          if (earningsErr) console.error("Error recording earnings:", earningsErr)
+        }
+      )
+      
+      res.status(201).json({ 
+        message: "Destaque creado exitosamente",
+        id: result.insertId 
+      })
+    }
+  )
+})
+
+// Deactivate highlight
+app.put("/admin/highlights/:id/deactivate", (req, res) => {
+  const highlightId = req.params.id
+  
+  // Get highlight data first
+  db.query(
+    "SELECT property_id FROM property_highlights WHERE id = ?",
+    [highlightId],
+    (err, results) => {
+      if (err) return res.status(500).json({ error: err.message })
+      if (results.length === 0) return res.status(404).json({ error: "Destaque no encontrado" })
+      
+      const propertyId = results[0].property_id
+      
+      // Update highlight to inactive
+      db.query(
+        "UPDATE property_highlights SET active = 0 WHERE id = ?",
+        [highlightId],
+        (updateErr) => {
+          if (updateErr) return res.status(500).json({ error: updateErr.message })
+          
+          // Update property highlight status
+          db.query(
+            "UPDATE properties SET is_highlighted = 0, highlight_end_date = NULL WHERE id = ?",
+            [propertyId],
+            () => {} // Silent error handling for property update
+          )
+          
+          // Update earnings record
+          db.query(
+            "UPDATE admin_earnings SET status = 'inactive', deactivated_at = NOW() WHERE type = 'highlight' AND reference_id = ? AND status = 'active'",
+            [propertyId],
+            () => {} // Silent error handling for earnings update
+          )
+          
+          res.json({ message: "Destaque desactivado exitosamente" })
+        }
+      )
+    }
+  )
+})
+
+// Get earnings report
+app.get("/admin/earnings-report", (req, res) => {
+  db.query(
+    `SELECT 
+      type,
+      COUNT(*) as count,
+      SUM(amount) as total,
+      AVG(amount) as average
+     FROM admin_earnings
+     WHERE status = 'active'
+     GROUP BY type`,
+    (err, results) => {
+      if (err) return res.status(500).json({ error: err.message })
+      
+      const report = {}
+      if (results) {
+        results.forEach(row => {
+          report[row.type] = {
+            count: row.count,
+            total: row.total,
+            average: row.average
+          }
+        })
+      }
+      
+      res.json(report)
+    }
+  )
+})
+
+// ==========================
 // 💾 FAVORITOS
 // ==========================
 app.post("/favorites", (req, res) => {
@@ -676,6 +823,7 @@ app.post("/user/properties", upload.array("images", 10), (req, res) => {
     transaction_type,
     is_admin,
     contact_phone,
+    company_name,
   } = req.body
 
   if (!req.files || req.files.length === 0) {
@@ -693,8 +841,8 @@ app.post("/user/properties", upload.array("images", 10), (req, res) => {
 
   db.query(
     `INSERT INTO properties(title, description, price, currency, address, city, user_id, latitude, longitude, 
-      bedrooms, bathrooms, area, land_area, property_type, transaction_type, approved, rejected, contact_phone)
-     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false, ?)`,
+      bedrooms, bathrooms, area, land_area, property_type, transaction_type, approved, rejected, contact_phone, company_name)
+     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false, ?, ?)`,
     [
       title,
       description,
@@ -713,6 +861,7 @@ app.post("/user/properties", upload.array("images", 10), (req, res) => {
       transaction_type || "venta",
       isApproved,
       contact_phone || null,
+      company_name || null,
   ],
   (err, result) => {
     if (err) {
@@ -840,6 +989,7 @@ app.put(
       property_type,
       transaction_type,
       contact_phone,
+      company_name,
       images_to_delete,
     } = req.body
 
@@ -863,6 +1013,7 @@ app.put(
         property_type=?,
         transaction_type=?,
         contact_phone=?,
+        company_name=?,
         rejected=false, 
         rejection_reason=NULL, 
         approved=false
@@ -883,6 +1034,7 @@ app.put(
         property_type || "casa",
         transaction_type || "venta",
         contact_phone || null,
+        company_name || null,
         propertyId,
       ],
       (err) => {
@@ -1532,6 +1684,20 @@ app.delete("/admin/createcto/departments/:id", (req, res) => {
     if (err) return res.status(500).json({ error: err.message })
     res.json({ message: "Departamento eliminado" })
   })
+})
+
+// GET Social Media (Public)
+app.get("/createcto/social-media", (req, res) => {
+  db.query(
+    `SELECT * FROM createcto_social_media WHERE is_visible = 1 ORDER BY display_order ASC`,
+    (err, results) => {
+      if (err) {
+        console.error("[v0] Error getting social media:", err)
+        return res.status(500).json({ error: err.message })
+      }
+      res.json(results || [])
+    },
+  )
 })
 
 // Social Media

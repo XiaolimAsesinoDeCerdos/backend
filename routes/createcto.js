@@ -413,16 +413,19 @@ router.put('/projects/:id', upload.fields([
   const { 
     department_number, 
     size_sqm, 
+    price_per_sqm,
     bedrooms, 
     bathrooms, 
     has_balcony, 
     has_parking, 
     has_storage,
     characteristics,
-    price,
     currency, // NUEVO CAMPO
     status 
   } = req.body;
+  
+  // Calcular el precio total: size_sqm * price_per_sqm
+  const totalPrice = size_sqm && price_per_sqm ? (parseFloat(size_sqm) * parseFloat(price_per_sqm)) : null;
   
   const sql = `
     INSERT INTO createcto_departments 
@@ -439,7 +442,7 @@ router.put('/projects/:id', upload.fields([
     has_parking ? 1 : 0,
     has_storage ? 1 : 0,
     characteristics || null,
-    price || null,
+    totalPrice, // Precio calculado
     currency || 'USD', // NUEVO
     status || 'available'
   ];
@@ -450,13 +453,14 @@ router.put('/projects/:id', upload.fields([
       id: result.insertId, 
       department_number, 
       size_sqm,
+      price_per_sqm,
+      price: totalPrice,
       bedrooms,
       bathrooms,
       has_balcony,
       has_parking,
       has_storage,
       characteristics,
-      price,
       currency, // NUEVO
       status 
     });
@@ -467,16 +471,19 @@ router.put('/projects/:id', upload.fields([
   const deptId = req.params.deptId;
   const { 
     size_sqm, 
+    price_per_sqm,
     bedrooms, 
     bathrooms, 
     has_balcony, 
     has_parking, 
     has_storage,
     characteristics,
-    price,
     currency, // NUEVO CAMPO
     status 
   } = req.body;
+  
+  // Calcular el precio total: size_sqm * price_per_sqm
+  const totalPrice = size_sqm && price_per_sqm ? (parseFloat(size_sqm) * parseFloat(price_per_sqm)) : null;
   
   const sql = `
     UPDATE createcto_departments 
@@ -492,7 +499,7 @@ router.put('/projects/:id', upload.fields([
     has_parking ? 1 : 0,
     has_storage ? 1 : 0,
     characteristics || null,
-    price || null,
+    totalPrice, // Precio calculado
     currency || 'USD', // NUEVO
     status || 'available',
     deptId
@@ -555,7 +562,7 @@ app.get("/admin/createcto/projects/:id/images", (req, res) => {
   });
 
   router.put('/admin/createcto/info', upload.single('logo'), (req, res) => {
-    const { about_text } = req.body;
+    const { about_text, QuienesSomos, mission, vision } = req.body;
     
     // Check if info exists
     const checkSql = 'SELECT id, logo_url FROM createcto_info LIMIT 1';
@@ -564,15 +571,36 @@ app.get("/admin/createcto/projects/:id/images", (req, res) => {
       
       let sql, params;
       if (results.length === 0) {
-        sql = 'INSERT INTO createcto_info (about_text, logo_url) VALUES (?, ?)';
-        params = [about_text || null, req.file ? `/uploads/${req.file.filename}` : null];
+        sql = 'INSERT INTO createcto_info (about_text, QuienesSomos, mission, vision, logo_url) VALUES (?, ?, ?, ?, ?)';
+        params = [
+          about_text || null, 
+          QuienesSomos || null,
+          mission || null,
+          vision || null,
+          req.file ? `/uploads/${req.file.filename}` : null
+        ];
       } else {
-        sql = 'UPDATE createcto_info SET ';
+        let updates = [];
         params = [];
         
         if (about_text) {
-          sql += 'about_text = ?';
+          updates.push('about_text = ?');
           params.push(about_text);
+        }
+        
+        if (QuienesSomos) {
+          updates.push('QuienesSomos = ?');
+          params.push(QuienesSomos);
+        }
+        
+        if (mission) {
+          updates.push('mission = ?');
+          params.push(mission);
+        }
+        
+        if (vision) {
+          updates.push('vision = ?');
+          params.push(vision);
         }
         
         if (req.file) {
@@ -587,11 +615,16 @@ app.get("/admin/createcto/projects/:id/images", (req, res) => {
               }
             }
           }
-          if (about_text) sql += ', ';
-          sql += 'logo_url = ?';
+          updates.push('logo_url = ?');
           params.push(`/uploads/${req.file.filename}`);
         }
-        sql += ' LIMIT 1';
+        
+        if (updates.length === 0) {
+          return res.status(400).json({ error: 'No fields to update' });
+        }
+        
+        sql = 'UPDATE createcto_info SET ' + updates.join(', ') + ' WHERE id = ?';
+        params.push(results[0].id);
       }
       
       db.query(sql, params, (err) => {
